@@ -1,0 +1,18 @@
+alias: Snow – Start 12-day timer on snow or manual ON
+description: "Starts 12-day timer when real snow is detected (>0.02 in/hr) or when manually enabled"
+mode: restart
+trigger:
+  - platform: numeric_state
+    entity_id: sensor.openweathermap_snow
+    above: 0.02
+  - platform: state
+    entity_id: input_boolean.snow_in_last_12_days
+    to: "on"
+condition: []
+action:
+  - service: input_boolean.turn_on
+    target:
+      entity_id: input_boolean.snow_in_last_12_days
+  - service: timer.start
+    target:
+      entity_id: timer.snow_recent_12d_timer

@@ -1,0 +1,13 @@
+alias: Snow – Clear flag when 12-day timer ends
+description: "Turns off snow_in_last_12_days when the snow window timer finishes"
+mode: single
+trigger:
+  - platform: event
+    event_type: timer.finished
+    event_data:
+      entity_id: timer.snow_recent_12d_timer
+condition: []
+action:
+  - service: input_boolean.turn_off
+    target:
+      entity_id: input_boolean.snow_in_last_12_days
