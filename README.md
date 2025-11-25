@@ -79,15 +79,17 @@ automations/
 | **snow_clear_flag.yaml** | Clears the “snow in last 12 days” flag when the timer expires |
 | **snow_cancel_timer.yaml** | Cancels the timer if snow flag is manually turned OFF |
 | **freeze_daily_reset.yaml** | Ensures the tape is OFF before TOU peak pricing begins (3:55 PM) |
-| **freeze_latch_on.yaml** | Turns the system ON during daylight only when temp is in melt band (25–39°F) & recent snow exists |
-| **freeze_maintain_latched.yaml** | Keeps tape ON while latched and conditions remain valid; shuts off when out of melt zone |
+| **freeze_latch_on.yaml** | Turns the system ON during off-peak daylight (06:00–15:55) when temp is in melt band (25–39°F) & recent snow exists |
+| **freeze_maintain_latched.yaml** | Keeps tape ON while latched and conditions remain valid; shuts off when out of melt zone or outside 06:00–15:55 window |
 
 ## Configurable Values
+
+You may customize these depending on climate and snow behavior:
 
 | Setting | Default | Notes |
 |--------|---------|-------|
 | Melt band (°F) | **25–39°F** | Below 25°F tape is ineffective; above 39°F roof is warm enough to melt naturally |
-| Daylight window | **08:00 → 15:55** | Optimizes melting during sun exposure and avoids peak pricing |
+| Daylight / off-peak window | **06:00 → 15:55** | Starts earlier to pre-warm north-facing roofs while staying in off-peak |
 | Snow window duration | **12 days** (288 hr) | Suitable for north-facing roofs that hold snow for weeks |
 | Snow detection threshold | **0.02 in/hr** | Prevents false positives from sensor noise |
 

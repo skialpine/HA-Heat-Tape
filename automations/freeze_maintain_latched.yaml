@@ -1,5 +1,5 @@
 alias: Freeze – Maintain ON while latched
-description: "Keep heat tape on only in daylight, melt zone, and recent snow"
+description: "Keep heat tape on only in off-peak daylight, melt zone, and recent snow"
 mode: restart
 trigger:
   - platform: state
@@ -20,7 +20,7 @@ trigger:
     for: "01:00:00"
 condition:
   - condition: time
-    after: "08:00:00"
+    after: "06:00:00"
     before: "15:55:00"
   - condition: state
     entity_id: input_boolean.freeze_latch
