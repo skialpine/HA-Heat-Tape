@@ -1,23 +1,29 @@
 alias: Freeze – Maintain ON while latched
-description: "Keep heat tape on only in off-peak daylight, melt zone, and recent snow"
+description: "Keep heat tape on only in melt window, melt band, and recent snow"
 mode: restart
+
 trigger:
   - platform: state
     entity_id: input_boolean.freeze_latch
     to: "on"
+
   - platform: homeassistant
     event: start
+
   - platform: state
     entity_id: switch.heat_tape
     to: "off"
+
   - platform: numeric_state
-    entity_id: sensor.openweathermap_temperature
+    entity_id: sensor.pirateweather_temperature
     above: 39
     for: "01:00:00"
+
   - platform: numeric_state
-    entity_id: sensor.openweathermap_temperature
+    entity_id: sensor.pirateweather_temperature
     below: 25
     for: "01:00:00"
+
 condition:
   - condition: time
     after: "06:00:00"
@@ -28,14 +34,15 @@ condition:
   - condition: state
     entity_id: input_boolean.snow_in_last_12_days
     state: "on"
+
 action:
   - choose:
       - conditions:
           - condition: numeric_state
-            entity_id: sensor.openweathermap_temperature
+            entity_id: sensor.pirateweather_temperature
             above: 25
           - condition: numeric_state
-            entity_id: sensor.openweathermap_temperature
+            entity_id: sensor.pirateweather_temperature
             below: 39
         sequence:
           - service: switch.turn_on
@@ -45,10 +52,10 @@ action:
           - condition: or
             conditions:
               - condition: numeric_state
-                entity_id: sensor.openweathermap_temperature
+                entity_id: sensor.pirateweather_temperature
                 above: 39
               - condition: numeric_state
-                entity_id: sensor.openweathermap_temperature
+                entity_id: sensor.pirateweather_temperature
                 below: 25
         sequence:
           - service: switch.turn_off

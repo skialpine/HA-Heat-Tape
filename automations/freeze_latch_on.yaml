@@ -1,28 +1,31 @@
 alias: Freeze – Latch ON when between 25F and 39F
-description: "Enable freeze latch only when temps are in melt band, off-peak daylight, and snow was recent"
+description: "Enable freeze latch when temps are in melt band, off-peak daylight, and snow was recent"
 mode: single
+
 trigger:
   - platform: numeric_state
-    entity_id: sensor.openweathermap_temperature
+    entity_id: sensor.pirateweather_temperature
     above: 25
   - platform: numeric_state
-    entity_id: sensor.openweathermap_temperature
+    entity_id: sensor.pirateweather_temperature
     below: 39
   - platform: time
     at: "06:00:00"
+
 condition:
   - condition: time
     after: "06:00:00"
     before: "15:55:00"
   - condition: numeric_state
-    entity_id: sensor.openweathermap_temperature
+    entity_id: sensor.pirateweather_temperature
     above: 25
   - condition: numeric_state
-    entity_id: sensor.openweathermap_temperature
+    entity_id: sensor.pirateweather_temperature
     below: 39
   - condition: state
     entity_id: input_boolean.snow_in_last_12_days
     state: "on"
+
 action:
   - service: input_boolean.turn_on
     target:
