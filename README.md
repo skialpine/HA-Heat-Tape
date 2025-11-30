@@ -84,7 +84,20 @@ The automation considers it “snowing now” when:
 states('weather.pirateweather') | lower | contains('snow')
 ```
 
-To avoid reacting to brief glitches, snow must be reported for **at least 6 minutes** before the “recent snow” timer starts.
+### ⚙ Recommended Pirate Weather update interval
+
+The snow detection automation uses a time-based debounce (`for:`).  
+For this to work correctly, Pirate Weather must update **more frequently** than the debounce window.
+
+Recommended configuration (in `configuration.yaml` or the integration options):
+
+```yaml
+pirateweather:
+  api_key: YOUR_API_KEY
+  update_interval: 600  # seconds (10 minutes)
+```
+
+With a 600‑second update interval and a 10‑minute debounce (see below), the system effectively requires **two consecutive "snowy" updates** before treating it as real snowfall.
 
 ## Automations Layout
 
@@ -104,7 +117,7 @@ automations/
 
 | File | Purpose |
 |------|---------|
-| **snow_start_timer.yaml** | Starts the 12-day snow window when Pirate Weather reports snow (state contains “snow”) **for at least 6 minutes**, or when manually toggled ON |
+| **snow_start_timer.yaml** | Starts the 12-day snow window when Pirate Weather reports snow (state contains “snow”) **for at least 10 minutes**, or when manually toggled ON |
 | **snow_clear_flag.yaml** | Clears the “snow in last 12 days” flag when the timer expires |
 | **snow_cancel_timer.yaml** | Cancels the timer if the snow flag is manually turned OFF |
 | **freeze_daily_reset.yaml** | Ensures the tape is OFF before TOU peak pricing begins (3:55 PM) |
@@ -120,7 +133,7 @@ You may customize these depending on climate and snow behavior:
 | Melt band (°F) | **25–39°F** | Below 25°F tape is ineffective; above 39°F roof is warm enough to melt naturally |
 | Daylight / off-peak window | **06:00 → 15:55** | Starts earlier to pre-warm north-facing roofs while staying in off-peak |
 | Snow window duration | **12 days** (288 hr) | Suitable for north-facing roofs that hold snow for weeks |
-| Snow detection source | **Pirate Weather state contains “snow” for ≥ 6 minutes** | Debounced to avoid reacting to one bad reading |
+| Snow detection source | **Pirate Weather state contains “snow” for ≥ 10 minutes** | Debounced; requires at least two snowy updates at 10‑min interval |
 
 ## Installation
 

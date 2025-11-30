@@ -1,14 +1,14 @@
 alias: Snow – Start 12-day timer on Pirate Weather snow or manual ON
-description: "Starts 12-day timer when Pirate Weather reports snow (state contains 'snow') for at least 6 minutes, or when manually enabled"
+description: "Starts 12-day timer when Pirate Weather reports snow (state contains 'snow') for at least 10 minutes, or when manually enabled"
 mode: restart
 
 trigger:
-  # Require 'snowy', 'snow', 'light_snow', etc. for 6 minutes
+  # Require 'snowy', 'snow', 'light_snow', etc. for 10 minutes
   - platform: template
     value_template: >
       {{ states('weather.pirateweather') | lower | contains('snow') }}
     for:
-      minutes: 6
+      minutes: 10
 
   # Manual activation from dashboard
   - platform: state
