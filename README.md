@@ -6,6 +6,7 @@ This repository contains a set of Home Assistant automations designed to intelli
 - Time-of-use (TOU) off-peak scheduling  
 - A “recent snowfall” window using a timer  
 - A high-power Z-Wave relay (Zooz ZEN78 800LR)  
+- **Pirate Weather** for accurate, real-time snow detection  
 
 These automations help prevent ice dams while significantly reducing electricity cost by running the tape **only when conditions justify it**.
 
@@ -24,10 +25,10 @@ This relay is ideal for roof heat tape control because:
 - Eliminates the need for an external contactor for most installations  
 
 ### ⚠️ Safety Notes  
-- Roof de-icing circuits commonly require **GFCI or GFPE** protection.  
-- Use a **dedicated circuit** sized for your heat tape load.  
-- Follow NEC / local code requirements for conductor gauge & torque specs.  
-- If unsure, consult a **licensed electrician**.
+- Use a dedicated circuit sized for your heat tape.  
+- Roof de-icing circuits often require **GFCI/GFPE protection**.  
+- Follow conductor-size and torque specifications.  
+- When in doubt, consult a licensed electrician.
 
 ## Required Home Assistant Entities
 
@@ -38,7 +39,7 @@ Tracks whether the melt cycle is actively engaged.
 
 ### 2. `input_boolean.snow_in_last_12_days`  
 Indicates whether snow has fallen recently.  
-Set automatically or manually from your dashboard.
+Set automatically by the snow timer automation, or manually from your dashboard.
 
 ### 3. `timer.snow_recent_12d_timer`  
 Represents how long snow should be considered “recent.”
@@ -49,13 +50,41 @@ Enter this as hours in the GUI.
 
 ## Weather Integration Requirements
 
-Install the **OpenWeatherMap** integration (API key required).  
-You must have access to these entities:
+You’ll use two weather sources:
+
+### OpenWeatherMap (temperature only)
+
+Install the **OpenWeatherMap** integration and ensure you have:
 
 - `sensor.openweathermap_temperature` (°F)  
-- `sensor.openweathermap_snow` (in/hr)  
 
-A threshold of **0.02 in/hr** is used to avoid false snow triggers.
+This is used for melt-band temperature checks (25–39°F).
+
+### Pirate Weather (real-time snow detection)
+
+Install the **Pirate Weather** integration via HACS and add it as an integration with your API key.
+
+You must have:
+
+- `weather.pirateweather`
+
+Pirate Weather’s **state** is used for snow detection.  
+Examples:
+
+- `snowy`
+- `light_snow`
+- `heavy_snow`
+- `rainy`
+- `cloudy`
+- `clear`
+
+The automation considers it “snowing now” when:
+
+```jinja2
+states('weather.pirateweather') | lower | contains('snow')
+```
+
+To avoid reacting to brief glitches, snow must be reported for **at least 6 minutes** before the “recent snow” timer starts.
 
 ## Automations Layout
 
@@ -75,9 +104,9 @@ automations/
 
 | File | Purpose |
 |------|---------|
-| **snow_start_timer.yaml** | Starts the 12-day snow window when snow intensity exceeds threshold or manually toggled ON |
+| **snow_start_timer.yaml** | Starts the 12-day snow window when Pirate Weather reports snow (state contains “snow”) **for at least 6 minutes**, or when manually toggled ON |
 | **snow_clear_flag.yaml** | Clears the “snow in last 12 days” flag when the timer expires |
-| **snow_cancel_timer.yaml** | Cancels the timer if snow flag is manually turned OFF |
+| **snow_cancel_timer.yaml** | Cancels the timer if the snow flag is manually turned OFF |
 | **freeze_daily_reset.yaml** | Ensures the tape is OFF before TOU peak pricing begins (3:55 PM) |
 | **freeze_latch_on.yaml** | Turns the system ON during off-peak daylight (06:00–15:55) when temp is in melt band (25–39°F) & recent snow exists |
 | **freeze_maintain_latched.yaml** | Keeps tape ON while latched and conditions remain valid; shuts off when out of melt zone or outside 06:00–15:55 window |
@@ -91,11 +120,12 @@ You may customize these depending on climate and snow behavior:
 | Melt band (°F) | **25–39°F** | Below 25°F tape is ineffective; above 39°F roof is warm enough to melt naturally |
 | Daylight / off-peak window | **06:00 → 15:55** | Starts earlier to pre-warm north-facing roofs while staying in off-peak |
 | Snow window duration | **12 days** (288 hr) | Suitable for north-facing roofs that hold snow for weeks |
-| Snow detection threshold | **0.02 in/hr** | Prevents false positives from sensor noise |
+| Snow detection source | **Pirate Weather state contains “snow” for ≥ 6 minutes** | Debounced to avoid reacting to one bad reading |
 
 ## Installation
 
 ### Option A — Using Home Assistant UI  
+
 For each file in `automations/`:
 
 1. Open the file and copy its contents.  
@@ -105,6 +135,7 @@ For each file in `automations/`:
 5. Save & enable.
 
 ### Option B — YAML Includes  
+
 If you manage automations as files, add this to `configuration.yaml`:
 
 ```yaml
