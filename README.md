@@ -4,8 +4,6 @@ This repository contains a **package-based Home Assistant automation** designed 
 
 The goal is to **prevent ice dams while minimizing electricity cost**, by running heat tape **only when it is effective** and **only during off-peak hours**.
 
-This project evolved over real-world winter use and incorporates lessons learned from actual snow, temperature, and power-usage data.
-
 ---
 
 ## Design Goals
@@ -23,7 +21,6 @@ This project evolved over real-world winter use and incorporates lessons learned
 
 This project is implemented as a **Home Assistant package**.
 
-That means:
 - Heat-tape automations are **file-managed and GitHub-tracked**
 - All other automations may continue to be created/edited in the **Home Assistant UI**
 - No duplicate IDs or automation conflicts
@@ -41,6 +38,7 @@ All heat-tape automations live inside this single file.
 ## Installation
 
 ### 1) Enable packages
+
 Add (or merge) this into `configuration.yaml`:
 
 ```yaml
@@ -49,13 +47,14 @@ homeassistant:
 ```
 
 ### 2) Install the package file
+
 Copy `heat_tape.yaml` into:
 
 ```
 /config/packages/heat_tape.yaml
 ```
 
-### 3) Create the required Helpers (two toggles + one timer)
+### 3) Create the required Helpers (2 toggles + timer + last-snow datetime)
 
 Go to: **Settings → Devices & Services → Helpers → Create Helper**
 
@@ -84,9 +83,19 @@ Go to: **Settings → Devices & Services → Helpers → Create Helper**
 
 Notes:
 - Some UIs show only hours/min/sec. Enter **288 hours**.
-- “Restore state” can be enabled; it’s fine either way. If enabled, it survives restarts more gracefully.
+- Timers can show **idle** after Home Assistant restarts; this project restores the timer correctly (see “Reboot-safe” section below).
+
+#### Helper 4: Last snow detected (date+time)
+- Type: **Date and/or Time**
+- Name: `Last snow detected`
+- Entity ID (required): `input_datetime.last_snow_detected`
+- Enable: **Date and Time**
+
+**Purpose:** reboot-safe tracking of the last detected snow (or manual enable).
+This allows Home Assistant to correctly restore the “recent snow” window even after a restart.
 
 ### 4) Restart Home Assistant
+
 A full restart is required.
 
 ---
@@ -113,8 +122,6 @@ Heat tape is a high-amperage load. Use a properly sized breaker, follow local co
 ## Weather Integration (Pirate Weather)
 
 All weather logic uses **Pirate Weather**.
-
-OpenWeatherMap was removed due to unreliable snow signals in mountain conditions.
 
 ### Required entities
 
@@ -147,40 +154,45 @@ or precip_intensity > 0.02 in/hr
 or current_day_snow_accumulation >= 0.2 in
 ```
 
-Accumulation is critical because intensity often under-reports mountain snowfall.
-
 ---
 
-## 12-Day Snow Window Logic
+## 12-Day Snow Window Logic (Reboot-safe)
 
-When snow is detected:
-- `snow_in_last_12_days` → ON
-- `snow_recent_12d_timer` → restarted to 12 days
+This project uses **three layers**:
 
-The timer **does not restart continuously during a storm**.  
-It restarts only on a **new** snow transition (false → true for 10 minutes).
+1) `input_datetime.last_snow_detected` (truth / durable)
+2) `input_boolean.snow_in_last_12_days` (permit flag)
+3) `timer.snow_recent_12d_timer` (UI countdown)
 
----
+### When snow is detected (or you manually enable the permit)
+- `last_snow_detected` is stamped with the current time
+- `snow_in_last_12_days` turns ON
+- the 12-day timer starts/resets
 
-## Manual Override Behavior
+### After a Home Assistant restart
+Timers often restore as **idle**, even if the snow flag is still ON.
 
-If you manually turn **OFF** `snow_in_last_12_days` during an active storm:
-- The system respects this override
-- Snow must clear and restart for automation to resume
+To fix that, the package includes an automation that:
+- recomputes how long it has been since `last_snow_detected`
+- turns the permit ON/OFF correctly
+- restarts the timer with the **remaining** duration
 
-This prevents the system from fighting user intent.
+### Manual OFF behavior
+If you manually turn **OFF** `snow_in_last_12_days`, the package:
+- cancels the timer
+- clears `last_snow_detected`
+- prevents a restart from immediately re-enabling the snow window
 
 ---
 
 ## Melt-Band Logic (25–39°F)
 
 Heat tape runs only when:
-- Snow occurred recently
+- Snow occurred recently (permit is ON)
 - Temperature is 25–39°F
-- Time is within the off-peak daylight window
-- Freeze latch is active
+- Time is within the off-peak daylight window (06:00 → 15:55)
 
-Below ~25°F heat tape is ineffective.  
+Below ~25°F heat tape is often ineffective.  
 Above ~39°F natural melting dominates.
 
 ---
@@ -191,10 +203,8 @@ System runs only during:
 - **06:00 → 15:55**
 
 At 15:55 daily:
-- Heat tape turns OFF
-- Freeze latch clears
-
-This guarantees no TOU peak usage at 16:00.
+- heat tape turns OFF
+- freeze latch clears
 
 ---
 
@@ -205,23 +215,10 @@ This guarantees no TOU peak usage at 16:00.
 | Heat Tape – Freeze – Latch ON | Enables system during melt band |
 | Heat Tape – Freeze – Maintain ON | Enforces correct on/off behavior |
 | Heat Tape – Freeze – Daily reset | Stops system before TOU peak |
-| Heat Tape – Snow – Start timer | Detects snow and starts 12-day window |
-| Heat Tape – Snow – Clear flag | Clears snow flag when timer ends |
-| Heat Tape – Snow – Cancel timer | Respects manual override |
-
----
-
-## Verification Checklist
-
-After a storm:
-- `snow_in_last_12_days` = ON
-- Timer ≈ 288 hours
-- Heat tape runs only in 25–39°F window
-- Timer counts down normally
-
-Quick manual test:
-1. Toggle `snow_in_last_12_days` ON → timer should start.
-2. If time is between 06:00–15:55 and temp is 25–39°F → heat tape should turn on.
+| Heat Tape – Snow – Start timer | Detects snow and stamps last snow time |
+| Heat Tape – Snow – Recompute after restart | Restores recent-snow window after HA restart |
+| Heat Tape – Snow – Clear flag | Clears snow permit when timer ends |
+| Heat Tape – Snow – Cancel timer | Respects manual OFF and clears last-snow time |
 
 ---
 

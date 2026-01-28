@@ -76,7 +76,6 @@ automation:
         at: "15:55:00"
     action:
       - choose:
-          # Keep ON only when: in window, snow recent, and temp in melt band
           - conditions:
               - condition: time
                 after: "06:00:00"
@@ -98,7 +97,6 @@ automation:
                 target:
                   entity_id: switch.heat_tape
         default:
-          # Otherwise, shut down and clear latch (covers: outside window, too cold, too warm, no recent snow)
           - service: switch.turn_off
             target:
               entity_id: switch.heat_tape
@@ -122,7 +120,7 @@ automation:
           entity_id: input_boolean.freeze_latch
 
   # -----------------------------
-  # Snow window (12 days)
+  # Snow window (12 days) with reboot-safe tracking
   # -----------------------------
 
   - id: heat_tape_snow_start_timer
@@ -130,10 +128,9 @@ automation:
     description: >
       Starts or restarts the 12-day snow window when Pirate Weather indicates
       meaningful snowfall (state, intensity, or accumulation) for at least 10 continuous minutes,
-      or when manually enabled.
+      or when manually enabled. Also stamps last snow time for reboot-safe recovery.
     mode: restart
     trigger:
-      # Automatic snow detection (debounced)
       - platform: template
         value_template: >
           {% set cond = states('weather.pirateweather') | lower %}
@@ -144,18 +141,56 @@ automation:
              or accum >= 0.2 }}
         for:
           minutes: 10
-
-      # Manual enable from dashboard
       - platform: state
         entity_id: input_boolean.snow_in_last_12_days
         to: "on"
     action:
+      - service: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.last_snow_detected
+        data:
+          datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
       - service: input_boolean.turn_on
         target:
           entity_id: input_boolean.snow_in_last_12_days
       - service: timer.start
         target:
           entity_id: timer.snow_recent_12d_timer
+
+  - id: heat_tape_snow_recompute_on_restart
+    alias: "Heat Tape – Snow – Recompute recent-snow window after restart"
+    description: >
+      On HA restart, recompute whether snow is still "recent" based on input_datetime.last_snow_detected.
+      If still within 12 days, re-enable the snow flag and restart the timer with the remaining duration.
+    mode: single
+    trigger:
+      - platform: homeassistant
+        event: start
+    variables:
+      last: "{{ states('input_datetime.last_snow_detected') }}"
+      last_ts: "{{ as_timestamp(last) if last not in ['unknown','unavailable','none',''] else 0 }}"
+      age_sec: "{{ (as_timestamp(now()) - last_ts) | int(999999999) }}"
+      window_sec: "{{ 12 * 24 * 3600 }}"
+      remaining_sec: "{{ (window_sec - age_sec) if age_sec < window_sec else 0 }}"
+    action:
+      - choose:
+          - conditions: "{{ remaining_sec > 0 }}"
+            sequence:
+              - service: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.snow_in_last_12_days
+              - service: timer.start
+                target:
+                  entity_id: timer.snow_recent_12d_timer
+                data:
+                  duration: "{{ remaining_sec }}"
+        default:
+          - service: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.snow_in_last_12_days
+          - service: timer.cancel
+            target:
+              entity_id: timer.snow_recent_12d_timer
 
   - id: heat_tape_snow_clear_flag
     alias: "Heat Tape – Snow – Clear flag when 12-day timer ends"
@@ -173,7 +208,9 @@ automation:
 
   - id: heat_tape_snow_cancel_timer
     alias: "Heat Tape – Snow – Cancel 12-day timer on manual OFF"
-    description: "Cancels the 12-day timer if snow_in_last_12_days is turned off manually."
+    description: >
+      Cancels the 12-day timer if snow_in_last_12_days is turned off manually.
+      Also clears last_snow_detected so a restart doesn't immediately re-enable the window.
     mode: single
     trigger:
       - platform: state
@@ -184,3 +221,8 @@ automation:
       - service: timer.cancel
         target:
           entity_id: timer.snow_recent_12d_timer
+      - service: input_datetime.set_datetime
+        target:
+          entity_id: input_datetime.last_snow_detected
+        data:
+          datetime: "1970-01-01 00:00:00"
