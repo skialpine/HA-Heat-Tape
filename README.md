@@ -10,16 +10,16 @@ This project evolved over real-world winter use and incorporates lessons learned
 
 ## Design Goals
 
-- Prevent ice dams without running heat tape continuously  
-- Avoid running heat tape when it is ineffective (too cold or already melting)  
-- Respect Time-of-Use (TOU) electric pricing  
-- Handle real-world weather data imperfections  
-- Allow safe manual override without fighting automation  
-- Allow normal UI automations to coexist safely  
+- Prevent ice dams without running heat tape continuously
+- Avoid running heat tape when it is ineffective (too cold or already melting)
+- Respect Time-of-Use (TOU) electric pricing
+- Handle real-world weather data imperfections
+- Allow safe manual override without fighting automation
+- Allow normal UI automations to coexist safely
 
 ---
 
-## Architecture (Important)
+## Architecture
 
 This project is implemented as a **Home Assistant package**.
 
@@ -40,7 +40,7 @@ All heat-tape automations live inside this single file.
 
 ## Installation
 
-### 1. Enable packages
+### 1) Enable packages
 Add (or merge) this into `configuration.yaml`:
 
 ```yaml
@@ -48,14 +48,45 @@ homeassistant:
   packages: !include_dir_named packages
 ```
 
-### 2. Install the package file
+### 2) Install the package file
 Copy `heat_tape.yaml` into:
 
 ```
 /config/packages/heat_tape.yaml
 ```
 
-### 3. Restart Home Assistant
+### 3) Create the required Helpers (two toggles + one timer)
+
+Go to: **Settings → Devices & Services → Helpers → Create Helper**
+
+#### Helper 1: Freeze latch (toggle)
+- Type: **Toggle**
+- Name: `Freeze latch`
+- Entity ID (recommended): `input_boolean.freeze_latch`
+
+**Purpose:** internal latch used by automations.  
+**Normal use:** do **not** manually control this.
+
+#### Helper 2: Snow in last 12 days (toggle)
+- Type: **Toggle**
+- Name: `Snow in last 12 days`
+- Entity ID (required): `input_boolean.snow_in_last_12_days`
+
+**Purpose:** “permit” switch that gates heat tape operation.
+- Set automatically by snow detection
+- Safe for **manual override** from a dashboard
+
+#### Helper 3: Snow recent timer (12 days)
+- Type: **Timer**
+- Name: `Snow recent 12d timer`
+- Entity ID (required): `timer.snow_recent_12d_timer`
+- Duration: **288:00:00** (12 days)
+
+Notes:
+- Some UIs show only hours/min/sec. Enter **288 hours**.
+- “Restore state” can be enabled; it’s fine either way. If enabled, it survives restarts more gracefully.
+
+### 4) Restart Home Assistant
 A full restart is required.
 
 ---
@@ -68,37 +99,14 @@ Product page:
 https://www.thesmartesthouse.com/products/zooz-z-wave-long-range-high-power-relay-zen78-800lr
 
 Why this relay works well for heat tape:
-
-- 40A resistive load rating  
-- Supports 120–277V  
-- Z-Wave 800 Long Range  
-- Built-in energy monitoring  
-- Eliminates need for external contactor in most installs  
+- 40A resistive load rating
+- Supports 120–277V
+- Z-Wave 800 Long Range
+- Built-in energy monitoring
+- Eliminates need for external contactor in most installs
 
 ⚠️ **Electrical safety**  
 Heat tape is a high-amperage load. Use a properly sized breaker, follow local code (often GFCI/GFPE), and consult a licensed electrician if unsure.
-
----
-
-## Helpers Required
-
-Create these helpers in  
-**Settings → Devices & Services → Helpers**
-
-### `input_boolean.freeze_latch`
-Internal latch used by automations.  
-**Do not manually control this in normal use.**
-
-### `input_boolean.snow_in_last_12_days`
-Indicates whether snow has fallen recently.
-- Set automatically by snow detection
-- Safe for **manual override** from the dashboard
-
-### `timer.snow_recent_12d_timer`
-Represents how long snow should be considered “recent.”
-
-**Recommended duration:**  
-- **288 hours (12 days)**
 
 ---
 
@@ -123,9 +131,9 @@ update_interval: 1200   # seconds (20 minutes)
 ```
 
 Why 1200 seconds:
-- Safe for **shared API keys**
+- Safe for **shared API keys** (especially if you have two HA instances)
 - Prevents rate-limit errors (429)
-- Snow logic uses debounce + long windows, so faster updates provide no benefit
+- Snow logic uses debounce + long windows, so faster updates provide little benefit
 
 ---
 
@@ -147,10 +155,10 @@ Accumulation is critical because intensity often under-reports mountain snowfall
 
 When snow is detected:
 - `snow_in_last_12_days` → ON
-- `timer.snow_recent_12d_timer` → restarted to 12 days
+- `snow_recent_12d_timer` → restarted to 12 days
 
 The timer **does not restart continuously during a storm**.  
-It only restarts on a new snow transition.
+It restarts only on a **new** snow transition (false → true for 10 minutes).
 
 ---
 
@@ -210,6 +218,10 @@ After a storm:
 - Timer ≈ 288 hours
 - Heat tape runs only in 25–39°F window
 - Timer counts down normally
+
+Quick manual test:
+1. Toggle `snow_in_last_12_days` ON → timer should start.
+2. If time is between 06:00–15:55 and temp is 25–39°F → heat tape should turn on.
 
 ---
 
