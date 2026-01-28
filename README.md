@@ -1,60 +1,103 @@
 # Home Assistant – Smart Roof Heat Tape Automation
 
-This repository contains a set of Home Assistant automations designed to intelligently control **roof de‑icing heat tape** in cold, snowy climates (especially mountain and north‑facing roofs).
+This repository contains a **package-based Home Assistant automation** designed to intelligently control **roof de-icing heat tape** in cold, snowy climates (especially mountain and north-facing roofs).
 
-The goal is to **prevent ice dams while minimizing electricity cost**, by running heat tape **only when it is effective** and **only during off‑peak hours**.
+The goal is to **prevent ice dams while minimizing electricity cost**, by running heat tape **only when it is effective** and **only during off-peak hours**.
 
-This project evolved over real‑world winter use and incorporates lessons learned from actual snow, temperature, and power‑usage data.
+This project evolved over real-world winter use and incorporates lessons learned from actual snow, temperature, and power-usage data.
 
 ---
 
 ## Design Goals
 
-- Prevent ice dams without running heat tape continuously
-- Avoid running heat tape when it is ineffective (too cold or already melting)
-- Respect Time‑of‑Use (TOU) electric pricing
-- Handle real‑world weather data imperfections
-- Allow safe manual override without fighting automation
+- Prevent ice dams without running heat tape continuously  
+- Avoid running heat tape when it is ineffective (too cold or already melting)  
+- Respect Time-of-Use (TOU) electric pricing  
+- Handle real-world weather data imperfections  
+- Allow safe manual override without fighting automation  
+- Allow normal UI automations to coexist safely  
+
+---
+
+## Architecture (Important)
+
+This project is implemented as a **Home Assistant package**.
+
+That means:
+- Heat-tape automations are **file-managed and GitHub-tracked**
+- All other automations may continue to be created/edited in the **Home Assistant UI**
+- No duplicate IDs or automation conflicts
+
+### Package file
+```
+packages/
+└── heat_tape.yaml
+```
+
+All heat-tape automations live inside this single file.
+
+---
+
+## Installation
+
+### 1. Enable packages
+Add (or merge) this into `configuration.yaml`:
+
+```yaml
+homeassistant:
+  packages: !include_dir_named packages
+```
+
+### 2. Install the package file
+Copy `heat_tape.yaml` into:
+
+```
+/config/packages/heat_tape.yaml
+```
+
+### 3. Restart Home Assistant
+A full restart is required.
 
 ---
 
 ## Hardware Used
 
-### Zooz ZEN78 800LR High‑Power Relay (40A)
+### Zooz ZEN78 800LR High-Power Relay (40A)
 
 Product page:  
 https://www.thesmartesthouse.com/products/zooz-z-wave-long-range-high-power-relay-zen78-800lr
 
 Why this relay works well for heat tape:
 
-- **40A resistive load rating** (suitable for large self‑regulating heat tape circuits)
-- Supports **120–277V**
-- **Z‑Wave 800 Long Range** (excellent reach to garages, attics, exterior panels)
-- Built‑in **energy monitoring** (useful for cost analysis)
-- Eliminates the need for an external contactor in most residential installs
+- 40A resistive load rating  
+- Supports 120–277V  
+- Z-Wave 800 Long Range  
+- Built-in energy monitoring  
+- Eliminates need for external contactor in most installs  
 
-> ⚠️ **Electrical safety**  
-> Heat tape is a high‑amperage load. Use a properly sized breaker, follow local code (often GFCI/GFPE), and consult a licensed electrician if unsure.
+⚠️ **Electrical safety**  
+Heat tape is a high-amperage load. Use a properly sized breaker, follow local code (often GFCI/GFPE), and consult a licensed electrician if unsure.
 
 ---
 
 ## Helpers Required
 
-Create the following helpers in  
+Create these helpers in  
 **Settings → Devices & Services → Helpers**
 
 ### `input_boolean.freeze_latch`
-Tracks whether the system is allowed to run during the current melt cycle.
+Internal latch used by automations.  
+**Do not manually control this in normal use.**
 
 ### `input_boolean.snow_in_last_12_days`
 Indicates whether snow has fallen recently.
 - Set automatically by snow detection
-- Can be manually toggled from the dashboard
+- Safe for **manual override** from the dashboard
 
 ### `timer.snow_recent_12d_timer`
 Represents how long snow should be considered “recent.”
 
-Recommended duration:
+**Recommended duration:**  
 - **288 hours (12 days)**
 
 ---
@@ -63,12 +106,11 @@ Recommended duration:
 
 All weather logic uses **Pirate Weather**.
 
-OpenWeatherMap was removed because it did not reliably expose snow intensity and accumulation signals needed for automation‑grade decisions in mountain conditions.
+OpenWeatherMap was removed due to unreliable snow signals in mountain conditions.
 
 ### Required entities
 
-Enable these Pirate Weather entities:
-
+Enable:
 - `weather.pirateweather`
 - `sensor.pirateweather_temperature`
 - `sensor.pirateweather_precip_intensity`
@@ -76,17 +118,18 @@ Enable these Pirate Weather entities:
 
 ### Recommended update interval
 
-Snow detection uses a debounce window, so Pirate Weather must update frequently:
-
 ```yaml
-update_interval: 600   # seconds (10 minutes)
+update_interval: 1200   # seconds (20 minutes)
 ```
 
-This effectively requires **two consecutive updates** confirming snow before acting.
+Why 1200 seconds:
+- Safe for **shared API keys**
+- Prevents rate-limit errors (429)
+- Snow logic uses debounce + long windows, so faster updates provide no benefit
 
 ---
 
-## Snow Detection Logic (Final)
+## Snow Detection Logic
 
 A snow event is detected when **any** of the following are true **for at least 10 continuous minutes**:
 
@@ -96,128 +139,87 @@ or precip_intensity > 0.02 in/hr
 or current_day_snow_accumulation >= 0.2 in
 ```
 
-### Why accumulation is trusted
-
-Real‑world data showed that:
-- Snow accumulation often increases while `precip_intensity` reports `0.00`
-- Overnight and light mountain snow is frequently under‑reported by intensity alone
-
-Using accumulation ≥ **0.2 inches** reliably captures real snowfall while filtering noise.
+Accumulation is critical because intensity often under-reports mountain snowfall.
 
 ---
 
-## 12‑Day Snow Window Logic
+## 12-Day Snow Window Logic
 
 When snow is detected:
+- `snow_in_last_12_days` → ON
+- `timer.snow_recent_12d_timer` → restarted to 12 days
 
-- `input_boolean.snow_in_last_12_days` → **ON**
-- `timer.snow_recent_12d_timer` → restarted to **12 days**
-
-When the timer expires:
-- `input_boolean.snow_in_last_12_days` → **OFF**
-
-### Why the timer does NOT restart mid‑storm
-
-The timer only restarts when snow conditions transition:
-
-```
-false → true (and stay true for 10 minutes)
-```
-
-During a continuous storm, the condition never becomes false, so the timer **counts down normally** instead of constantly restarting.
-
-This prevents thrashing and preserves a meaningful “time since last snow” window.
+The timer **does not restart continuously during a storm**.  
+It only restarts on a new snow transition.
 
 ---
 
-## Manual Override Behavior (Important)
+## Manual Override Behavior
 
-If you manually turn **OFF** `input_boolean.snow_in_last_12_days` during an active storm:
+If you manually turn **OFF** `snow_in_last_12_days` during an active storm:
+- The system respects this override
+- Snow must clear and restart for automation to resume
 
-- The system treats this as a **manual override for the remainder of that storm**
-- The flag will **not** re‑enable automatically until:
-  1. Snow conditions go false, and
-  2. A **new** snow event begins and lasts 10 minutes
-
-This prevents the automation from fighting intentional user actions.
+This prevents the system from fighting user intent.
 
 ---
 
-## Melt‑Band Logic (25–39°F)
+## Melt-Band Logic (25–39°F)
 
-Heat tape is allowed to run only when **all** of the following are true:
+Heat tape runs only when:
+- Snow occurred recently
+- Temperature is 25–39°F
+- Time is within the off-peak daylight window
+- Freeze latch is active
 
-- Snow occurred recently (`snow_in_last_12_days` = ON)
-- Temperature is between **25°F and 39°F**
-- Time is within the off‑peak daylight window
-- `freeze_latch` is ON
-
-### Why 25–39°F?
-
-- Below ~25°F, heat tape is largely ineffective at moving meltwater
-- Above ~39°F, natural melting typically reduces ice‑dam risk
-- This band focuses energy where heat tape is most effective
+Below ~25°F heat tape is ineffective.  
+Above ~39°F natural melting dominates.
 
 ---
 
-## Time‑of‑Use / Daylight Window
+## Time-of-Use / Daylight Window
 
-The system runs only during:
-
+System runs only during:
 - **06:00 → 15:55**
 
-At **15:55**, a daily reset automation:
-- Turns OFF the heat tape
-- Clears the freeze latch
+At 15:55 daily:
+- Heat tape turns OFF
+- Freeze latch clears
 
-This guarantees the system never runs into TOU peak pricing at 16:00.
+This guarantees no TOU peak usage at 16:00.
 
 ---
 
-## Automation Files
+## Automations Included
 
-```
-automations/
-├── snow_start_timer.yaml
-├── snow_clear_flag.yaml
-├── snow_cancel_timer.yaml
-├── freeze_daily_reset.yaml
-├── freeze_latch_on.yaml
-└── freeze_maintain_latched.yaml
-```
-
-### Summary
-
-| File | Purpose |
-|-----|--------|
-| snow_start_timer | Detect snow and start 12‑day timer |
-| snow_clear_flag | Clear snow flag when timer expires |
-| snow_cancel_timer | Cancel timer on manual OFF |
-| freeze_daily_reset | Shut system down before TOU peak |
-| freeze_latch_on | Enable system during melt band |
-| freeze_maintain_latched | Maintain safe on/off behavior |
+| Automation | Purpose |
+|-----------|--------|
+| Heat Tape – Freeze – Latch ON | Enables system during melt band |
+| Heat Tape – Freeze – Maintain ON | Enforces correct on/off behavior |
+| Heat Tape – Freeze – Daily reset | Stops system before TOU peak |
+| Heat Tape – Snow – Start timer | Detects snow and starts 12-day window |
+| Heat Tape – Snow – Clear flag | Clears snow flag when timer ends |
+| Heat Tape – Snow – Cancel timer | Respects manual override |
 
 ---
 
 ## Verification Checklist
 
 After a storm:
-
-- `snow_in_last_12_days` should be **ON**
-- `timer.snow_recent_12d_timer` should show ~288 hours remaining
-- Heat tape should turn on during mornings if temp is 25–39°F
-- Timer should **count down**, not restart repeatedly
+- `snow_in_last_12_days` = ON
+- Timer ≈ 288 hours
+- Heat tape runs only in 25–39°F window
+- Timer counts down normally
 
 ---
 
 ## License
 
-Apache License 2.0  
-See `LICENSE` for details.
+Apache License 2.0
 
 ---
 
 ## Disclaimer
 
-This project controls high‑amperage electrical equipment.  
-Always follow local electrical codes and consult a qualified electrician when needed.
+This project controls high-amperage electrical equipment.  
+Always follow local electrical codes and consult a qualified electrician.

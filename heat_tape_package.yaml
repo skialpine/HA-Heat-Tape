@@ -1,0 +1,186 @@
+# Heat Tape package: keeps heat-tape automations in GitHub while allowing UI automations
+# to remain managed in automations.yaml.
+#
+# Install:
+# 1) Put this file at: /config/packages/heat_tape.yaml
+# 2) Ensure configuration.yaml contains:
+#      homeassistant:
+#        packages: !include_dir_named packages
+# 3) Restart Home Assistant
+
+automation:
+
+  # -----------------------------
+  # Freeze / Heat Tape control
+  # -----------------------------
+
+  - id: heat_tape_freeze_latch_on
+    alias: "Heat Tape – Freeze – Latch ON when between 25F and 39F"
+    description: "Enable freeze latch only when temps are in melt band, off-peak daylight, and snow was recent."
+    mode: single
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.pirateweather_temperature
+        above: 25
+      - platform: numeric_state
+        entity_id: sensor.pirateweather_temperature
+        below: 39
+      - platform: time
+        at: "06:00:00"
+    condition:
+      - condition: time
+        after: "06:00:00"
+        before: "15:55:00"
+      - condition: numeric_state
+        entity_id: sensor.pirateweather_temperature
+        above: 25
+      - condition: numeric_state
+        entity_id: sensor.pirateweather_temperature
+        below: 39
+      - condition: state
+        entity_id: input_boolean.snow_in_last_12_days
+        state: "on"
+    action:
+      - service: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.freeze_latch
+      - service: switch.turn_on
+        target:
+          entity_id: switch.heat_tape
+
+  - id: heat_tape_freeze_maintain_latched
+    alias: "Heat Tape – Freeze – Maintain ON while latched"
+    description: "Enforce heat tape state based on time window, melt band (25–39F), and recent snow."
+    mode: restart
+    trigger:
+      - platform: state
+        entity_id: input_boolean.freeze_latch
+      - platform: homeassistant
+        event: start
+      - platform: state
+        entity_id: switch.heat_tape
+        to: "off"
+      - platform: state
+        entity_id: input_boolean.snow_in_last_12_days
+      - platform: numeric_state
+        entity_id: sensor.pirateweather_temperature
+        above: 39
+        for: "01:00:00"
+      - platform: numeric_state
+        entity_id: sensor.pirateweather_temperature
+        below: 25
+        for: "01:00:00"
+      - platform: time
+        at: "06:00:00"
+      - platform: time
+        at: "15:55:00"
+    action:
+      - choose:
+          # Keep ON only when: in window, snow recent, and temp in melt band
+          - conditions:
+              - condition: time
+                after: "06:00:00"
+                before: "15:55:00"
+              - condition: state
+                entity_id: input_boolean.snow_in_last_12_days
+                state: "on"
+              - condition: numeric_state
+                entity_id: sensor.pirateweather_temperature
+                above: 25
+              - condition: numeric_state
+                entity_id: sensor.pirateweather_temperature
+                below: 39
+            sequence:
+              - service: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.freeze_latch
+              - service: switch.turn_on
+                target:
+                  entity_id: switch.heat_tape
+        default:
+          # Otherwise, shut down and clear latch (covers: outside window, too cold, too warm, no recent snow)
+          - service: switch.turn_off
+            target:
+              entity_id: switch.heat_tape
+          - service: input_boolean.turn_off
+            target:
+              entity_id: input_boolean.freeze_latch
+
+  - id: heat_tape_freeze_daily_reset
+    alias: "Heat Tape – Freeze – Daily reset at 3:55 PM"
+    description: "Turn off heat tape and latch before TOU premium starts."
+    mode: single
+    trigger:
+      - platform: time
+        at: "15:55:00"
+    action:
+      - service: switch.turn_off
+        target:
+          entity_id: switch.heat_tape
+      - service: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.freeze_latch
+
+  # -----------------------------
+  # Snow window (12 days)
+  # -----------------------------
+
+  - id: heat_tape_snow_start_timer
+    alias: "Heat Tape – Snow – Start 12-day timer on Pirate Weather snow or manual ON"
+    description: >
+      Starts or restarts the 12-day snow window when Pirate Weather indicates
+      meaningful snowfall (state, intensity, or accumulation) for at least 10 continuous minutes,
+      or when manually enabled.
+    mode: restart
+    trigger:
+      # Automatic snow detection (debounced)
+      - platform: template
+        value_template: >
+          {% set cond = states('weather.pirateweather') | lower %}
+          {% set rate = states('sensor.pirateweather_precip_intensity') | float(0) %}
+          {% set accum = states('sensor.pirateweather_current_day_snow_accumulation') | float(0) %}
+          {{ 'snow' in cond
+             or rate > 0.02
+             or accum >= 0.2 }}
+        for:
+          minutes: 10
+
+      # Manual enable from dashboard
+      - platform: state
+        entity_id: input_boolean.snow_in_last_12_days
+        to: "on"
+    action:
+      - service: input_boolean.turn_on
+        target:
+          entity_id: input_boolean.snow_in_last_12_days
+      - service: timer.start
+        target:
+          entity_id: timer.snow_recent_12d_timer
+
+  - id: heat_tape_snow_clear_flag
+    alias: "Heat Tape – Snow – Clear flag when 12-day timer ends"
+    description: "Turns off snow_in_last_12_days when the 12-day timer finishes."
+    mode: single
+    trigger:
+      - platform: event
+        event_type: timer.finished
+        event_data:
+          entity_id: timer.snow_recent_12d_timer
+    action:
+      - service: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.snow_in_last_12_days
+
+  - id: heat_tape_snow_cancel_timer
+    alias: "Heat Tape – Snow – Cancel 12-day timer on manual OFF"
+    description: "Cancels the 12-day timer if snow_in_last_12_days is turned off manually."
+    mode: single
+    trigger:
+      - platform: state
+        entity_id: input_boolean.snow_in_last_12_days
+        from: "on"
+        to: "off"
+    action:
+      - service: timer.cancel
+        target:
+          entity_id: timer.snow_recent_12d_timer
