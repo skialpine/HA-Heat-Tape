@@ -185,7 +185,7 @@ automation:
                 target:
                   entity_id: timer.snow_recent_12d_timer
                 data:
-                  duration: "{{ remaining_sec }}"
+                  duration: "{{ '%02d:%02d:%02d' | format((remaining_sec|int)//3600, ((remaining_sec|int)%3600)//60, (remaining_sec|int)%60) }}"
         default:
           - service: input_boolean.turn_off
             target:
