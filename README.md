@@ -2,6 +2,7 @@
 
 This repository contains a **package-based Home Assistant automation** designed to intelligently control **roof de-icing heat tape** in cold, snowy climates (especially mountain and north-facing roofs).
 
+
 The goal is to **prevent ice dams while minimizing electricity cost**, by running heat tape **only when it is effective** and **only during off-peak hours**.
 
 ---
@@ -28,7 +29,7 @@ This project is implemented as a **Home Assistant package**.
 ### Package file
 ```
 packages/
-└── heat_tape.yaml
+└── heat_tape_package.yaml
 ```
 
 All heat-tape automations live inside this single file.
@@ -48,11 +49,13 @@ homeassistant:
 
 ### 2) Install the package file
 
-Copy `heat_tape.yaml` into:
+Copy `heat_tape_package.yaml` into:
 
 ```
-/config/packages/heat_tape.yaml
+/config/packages/heat_tape_package.yaml
 ```
+
+(If you prefer a different filename you may rename the file during install; the automations expect the entities and helpers described below.)
 
 ### 3) Create the required Helpers (2 toggles + timer + last-snow datetime)
 
@@ -93,6 +96,8 @@ Notes:
 
 **Purpose:** reboot-safe tracking of the last detected snow (or manual enable).
 This allows Home Assistant to correctly restore the “recent snow” window even after a restart.
+
+Important: configure this input_datetime with both date and time (including seconds) to ensure correct parsing of timestamps written by the automations.
 
 ### 4) Restart Home Assistant
 
@@ -177,10 +182,12 @@ To fix that, the package includes an automation that:
 - turns the permit ON/OFF correctly
 - restarts the timer with the **remaining** duration
 
+Note: the automation formats the remaining duration as an explicit HH:MM:SS string when restarting the timer for robust behaviour across HA versions.
+
 ### Manual OFF behavior
 If you manually turn **OFF** `snow_in_last_12_days`, the package:
 - cancels the timer
-- clears `last_snow_detected`
+- clears `last_snow_detected` (the automation sets it to the sentinel value `1970-01-01 00:00:00`)
 - prevents a restart from immediately re-enabling the snow window
 
 ---
@@ -205,6 +212,8 @@ System runs only during:
 At 15:55 daily:
 - heat tape turns OFF
 - freeze latch clears
+
+Note: triggers at exact boundary times combined with `after`/`before` conditions can be sensitive to inclusivity semantics; if you observe missed events at 06:00, consider adjusting the condition bounds slightly or use a template-based time condition.
 
 ---
 
