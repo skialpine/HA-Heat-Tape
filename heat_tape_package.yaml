@@ -169,12 +169,14 @@ automation:
     variables:
       last: "{{ states('input_datetime.last_snow_detected') }}"
       last_ts: "{{ as_timestamp(last) if last not in ['unknown','unavailable','none',''] else 0 }}"
-      age_sec: "{{ (as_timestamp(now()) - last_ts) | int(999999999) }}"
+      age_sec: "{{ (as_timestamp(now()) - last_ts) | int }}"
       window_sec: "{{ 12 * 24 * 3600 }}"
-      remaining_sec: "{{ (window_sec - age_sec) if age_sec < window_sec else 0 }}"
+      remaining_sec: "{{ window_sec - age_sec if age_sec < window_sec else 0 }}"
     action:
       - choose:
-          - conditions: "{{ remaining_sec > 0 }}"
+          - conditions:
+              - condition: template
+                value_template: "{{ remaining_sec > 0 }}"
             sequence:
               - service: input_boolean.turn_on
                 target:
