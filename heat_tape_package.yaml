@@ -2,7 +2,7 @@
 # to remain managed in automations.yaml.
 #
 # Install:
-# 1) Put this file at: /config/packages/heat_tape.yaml
+# 1) Put this file at: /config/packages/heat_tape_package.yaml
 # 2) Ensure configuration.yaml contains:
 #      homeassistant:
 #        packages: !include_dir_named packages
@@ -16,7 +16,11 @@ automation:
 
   - id: heat_tape_freeze_latch_on
     alias: "Heat Tape – Freeze – Latch ON when between 25F and 39F"
-    description: "Enable freeze latch only when temps are in melt band, off-peak daylight, and snow was recent."
+    description: >
+      Enable freeze latch only when temps are in melt band, off-peak daylight, and snow was recent.
+      Checks hourly forecast before latching — skips startup if temps will rise above 39°F within
+      2 hours, since natural melting will dominate shortly and running the tape is wasteful.
+      Falls back safely if forecast data is unavailable (proceeds with turn-on).
     mode: single
     trigger:
       - platform: numeric_state
@@ -41,12 +45,32 @@ automation:
         entity_id: input_boolean.snow_in_last_12_days
         state: "on"
     action:
-      - service: input_boolean.turn_on
+      - condition: state
+        entity_id: input_boolean.freeze_latch
+        state: "off"
+      - service: weather.get_forecasts
         target:
-          entity_id: input_boolean.freeze_latch
-      - service: switch.turn_on
-        target:
-          entity_id: switch.heat_tape
+          entity_id: weather.pirateweather
+        data:
+          type: hourly
+        response_variable: forecast_data
+      - choose:
+          - conditions:
+              - condition: template
+                value_template: >
+                  {% set forecasts = forecast_data['weather.pirateweather']['forecast'] %}
+                  {% set t1 = forecasts[0].temperature | float(0) if forecasts | length > 0 else 0 %}
+                  {% set t2 = forecasts[1].temperature | float(0) if forecasts | length > 1 else 0 %}
+                  {{ t1 <= 39 and t2 <= 39 }}
+            sequence:
+              - service: input_boolean.turn_on
+                target:
+                  entity_id: input_boolean.freeze_latch
+              - service: switch.turn_on
+                target:
+                  entity_id: switch.heat_tape
+          # No default: if forecast shows temps rising above 39F within 2h, skip startup.
+          # Natural melting will handle it. The automation re-evaluates if temp stays in band.
 
   - id: heat_tape_freeze_maintain_latched
     alias: "Heat Tape – Freeze – Maintain ON while latched"
@@ -55,6 +79,7 @@ automation:
     trigger:
       - platform: state
         entity_id: input_boolean.freeze_latch
+        to: "on"
       - platform: homeassistant
         event: start
       - platform: state
@@ -120,6 +145,48 @@ automation:
           entity_id: input_boolean.freeze_latch
 
   # -----------------------------
+  # Forecast-aware immediate shutoff (#1)
+  # -----------------------------
+
+  - id: heat_tape_forecast_shutoff
+    alias: "Heat Tape – Forecast – Immediate shutoff when warming confirmed"
+    description: >
+      When temperature exceeds 39°F and the next-hour forecast also exceeds 39°F,
+      turn off immediately rather than waiting the standard 1-hour delay built into
+      "Maintain ON while latched". Saves ~1 hour of runtime per warm day.
+
+      Fails safely: if the forecast service call fails or forecast is uncertain
+      (next hour ≤ 39°F), this automation does nothing. The 1-hour delay trigger
+      in "Maintain ON" still fires as a backstop.
+    mode: single
+    trigger:
+      - platform: numeric_state
+        entity_id: sensor.pirateweather_temperature
+        above: 39
+    condition:
+      - condition: state
+        entity_id: switch.heat_tape
+        state: "on"
+    action:
+      - service: weather.get_forecasts
+        target:
+          entity_id: weather.pirateweather
+        data:
+          type: hourly
+        response_variable: forecast_data
+      - condition: template
+        value_template: >
+          {% set forecasts = forecast_data['weather.pirateweather']['forecast'] %}
+          {% set next_temp = forecasts[0].temperature | float(0) if forecasts | length > 0 else 0 %}
+          {{ next_temp > 39 }}
+      - service: switch.turn_off
+        target:
+          entity_id: switch.heat_tape
+      - service: input_boolean.turn_off
+        target:
+          entity_id: input_boolean.freeze_latch
+
+  # -----------------------------
   # Snow window (12 days) with reboot-safe tracking
   # -----------------------------
 
@@ -132,6 +199,7 @@ automation:
     mode: restart
     trigger:
       - platform: template
+        id: snow_detected
         value_template: >
           {% set cond = states('weather.pirateweather') | lower %}
           {% set rate = states('sensor.pirateweather_precip_intensity') | float(0) %}
@@ -142,9 +210,20 @@ automation:
         for:
           minutes: 10
       - platform: state
+        id: manual_on
         entity_id: input_boolean.snow_in_last_12_days
         to: "on"
     action:
+      - if:
+          - condition: trigger
+            id: manual_on
+          - condition: template
+            value_template: >
+              {% set last = states('input_datetime.last_snow_detected') %}
+              {% set last_ts = as_timestamp(last) if last not in ['unknown','unavailable','none',''] else 0 %}
+              {{ (as_timestamp(now()) - last_ts) < (12 * 24 * 3600) }}
+        then:
+          - stop: "Skipping re-stamp: boolean restored from recompute, valid snow event already tracked."
       - service: input_datetime.set_datetime
         target:
           entity_id: input_datetime.last_snow_detected

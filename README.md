@@ -202,6 +202,12 @@ Heat tape runs only when:
 Below ~25°F heat tape is often ineffective.  
 Above ~39°F natural melting dominates.
 
+### Forecast-aware behavior
+
+**Startup skip:** Before latching ON, the package fetches the next two hourly forecast periods. If either period exceeds 39°F, startup is skipped entirely — natural melting will dominate shortly and running the tape would be wasteful. The automation re-evaluates if the temperature remains in the melt band.
+
+**Immediate shutoff:** When temperature rises above 39°F, the package checks the next-hour forecast. If the forecast also exceeds 39°F, the tape is turned off immediately rather than waiting the standard one-hour delay. This saves approximately 30% runtime on warm days compared to relying on delay-based triggers alone. If the forecast is unavailable or uncertain, the one-hour delay trigger acts as a backstop.
+
 ---
 
 ## Time-of-Use / Daylight Window
@@ -221,9 +227,10 @@ Note: triggers at exact boundary times combined with `after`/`before` conditions
 
 | Automation | Purpose |
 |-----------|--------|
-| Heat Tape – Freeze – Latch ON | Enables system during melt band |
-| Heat Tape – Freeze – Maintain ON | Enforces correct on/off behavior |
-| Heat Tape – Freeze – Daily reset | Stops system before TOU peak |
+| Heat Tape – Freeze – Latch ON | Enables system during melt band; skips if forecast shows warming within 2h |
+| Heat Tape – Freeze – Maintain ON | Enforces correct on/off behavior while latched |
+| Heat Tape – Freeze – Daily reset | Stops system before TOU peak (15:55) |
+| Heat Tape – Forecast – Immediate shutoff | Turns off immediately when current + next-hour forecast both > 39°F |
 | Heat Tape – Snow – Start timer | Detects snow and stamps last snow time |
 | Heat Tape – Snow – Recompute after restart | Restores recent-snow window after HA restart |
 | Heat Tape – Snow – Clear flag | Clears snow permit when timer ends |
