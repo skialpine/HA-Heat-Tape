@@ -37,7 +37,7 @@ The `-server` arg takes `host:port` **without** `https://` prefix — the binary
 ## Target Home Assistant Instance
 
 - **Instance**: Edwards (ED) at `http://homeassistant-ed.tail7752d4.ts.net:8123`
-- **Install type**: Container (not HA OS) — no Add-ons section; uses "Apps" instead
+- **Install type**: Home Assistant OS 17.3 (core-2026.5.4) — Apps store available. CHV also HA OS 17.3.
 - **Package path**: `/config/packages/heat_tape_package.yaml`
 - **`configuration.yaml`** must include:
   ```yaml
