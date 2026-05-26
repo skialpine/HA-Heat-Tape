@@ -21,6 +21,8 @@ automation:
       Checks hourly forecast before latching — skips startup if temps will rise above 39°F within
       2 hours, since natural melting will dominate shortly and running the tape is wasteful.
       Falls back safely if forecast data is unavailable (proceeds with turn-on).
+      Also suppressed when binary_sensor.heat_tape_seasonal_off is ON (rolling 7-day weather
+      indicates the season has turned).
     mode: single
     trigger:
       - platform: numeric_state
@@ -44,6 +46,9 @@ automation:
       - condition: state
         entity_id: input_boolean.snow_in_last_12_days
         state: "on"
+      - condition: state
+        entity_id: binary_sensor.heat_tape_seasonal_off
+        state: "off"
     action:
       - condition: state
         entity_id: input_boolean.freeze_latch
@@ -74,7 +79,9 @@ automation:
 
   - id: heat_tape_freeze_maintain_latched
     alias: "Heat Tape – Freeze – Maintain ON while latched"
-    description: "Enforce heat tape state based on time window, melt band (25–39F), and recent snow."
+    description: >
+      Enforce heat tape state based on time window, melt band (25–39F), recent snow, and
+      seasonal-off gate (rolling 7-day temperature window).
     mode: restart
     trigger:
       - platform: state
@@ -87,6 +94,8 @@ automation:
         to: "off"
       - platform: state
         entity_id: input_boolean.snow_in_last_12_days
+      - platform: state
+        entity_id: binary_sensor.heat_tape_seasonal_off
       - platform: numeric_state
         entity_id: sensor.pirateweather_temperature
         above: 39
@@ -114,6 +123,9 @@ automation:
               - condition: numeric_state
                 entity_id: sensor.pirateweather_temperature
                 below: 39
+              - condition: state
+                entity_id: binary_sensor.heat_tape_seasonal_off
+                state: "off"
             sequence:
               - service: input_boolean.turn_on
                 target:
@@ -307,3 +319,45 @@ automation:
           entity_id: input_datetime.last_snow_detected
         data:
           datetime: "1970-01-01 00:00:00"
+
+# -----------------------------
+# Seasonal-off gate (rolling 7-day temperature window)
+# -----------------------------
+# Suppresses heat tape when the past week's weather indicates the season has turned
+# warm enough that ice dams are unlikely. Uses rolling min/max over 7 days so a single
+# cold night keeps the system armed — chosen over "average daily low" because false-
+# negative (no run when needed) is worse than false-positive for heat tape.
+#
+# Gate is ON (suppress) when BOTH:
+#   - 7-day MIN temperature > 32°F  (no freezing all week)
+#   - 7-day MAX temperature > 50°F  (warm enough to call it spring)
+# Fails OFF (allow runs) when either statistics sensor is unavailable (first 7 days
+# after deploy, or sensor outage).
+
+sensor:
+  - platform: statistics
+    name: "PirateWeather Temp Min 7d"
+    unique_id: pirateweather_temp_min_7d
+    entity_id: sensor.pirateweather_temperature
+    state_characteristic: value_min
+    max_age:
+      days: 7
+    sampling_size: 1000
+  - platform: statistics
+    name: "PirateWeather Temp Max 7d"
+    unique_id: pirateweather_temp_max_7d
+    entity_id: sensor.pirateweather_temperature
+    state_characteristic: value_max
+    max_age:
+      days: 7
+    sampling_size: 1000
+
+template:
+  - binary_sensor:
+      - name: "Heat Tape Seasonal Off"
+        unique_id: heat_tape_seasonal_off
+        icon: mdi:weather-sunny
+        state: >
+          {% set t_min = states('sensor.pirateweather_temp_min_7d') | float(none) %}
+          {% set t_max = states('sensor.pirateweather_temp_max_7d') | float(none) %}
+          {{ t_min is not none and t_max is not none and t_min > 32 and t_max > 50 }}

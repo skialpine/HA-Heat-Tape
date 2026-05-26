@@ -106,12 +106,25 @@ If either exceeds 39°F, skips turn-on — natural melting will dominate shortly
 forecast. If also > 39°F, turns off immediately rather than waiting the 1-hour delay in "Maintain ON".
 Estimated savings: ~30% runtime reduction on warm days.
 
+### Seasonal-Off Gate (rolling 7-day window)
+A `template:` binary sensor `binary_sensor.heat_tape_seasonal_off` suppresses the tape when
+the past 7 days indicate the season has turned. Fed by two `statistics` platform sensors:
+- `sensor.pirateweather_temp_min_7d` — rolling 7-day MIN of `sensor.pirateweather_temperature`
+- `sensor.pirateweather_temp_max_7d` — rolling 7-day MAX
+
+Gate is ON (suppress) when **both**: min > 32°F AND max > 50°F. Fails OFF (allow runs) when
+either statistics sensor is unavailable. Rolling min/max chosen over avg-daily because one
+freezing night keeps the system armed — the safer direction for heat tape.
+
+The gate condition is wired into both `heat_tape_freeze_latch_on` and the stay-on branch of
+`heat_tape_freeze_maintain_latched`.
+
 ## Automations Summary
 
 | ID | Alias | Purpose |
 |----|-------|---------|
-| `heat_tape_freeze_latch_on` | Freeze – Latch ON | Turns on when in melt band; skips if forecast shows warming |
-| `heat_tape_freeze_maintain_latched` | Freeze – Maintain ON | Enforces correct state; turns off when conditions no longer met |
+| `heat_tape_freeze_latch_on` | Freeze – Latch ON | Turns on when in melt band; skips if forecast shows warming or seasonal-off gate active |
+| `heat_tape_freeze_maintain_latched` | Freeze – Maintain ON | Enforces correct state; turns off when conditions no longer met or seasonal-off gate active |
 | `heat_tape_freeze_daily_reset` | Freeze – Daily reset at 3:55 PM | Hard shutoff before TOU peak |
 | `heat_tape_forecast_shutoff` | Forecast – Immediate shutoff | Fast shutoff when current + forecast both > 39°F |
 | `heat_tape_snow_start_timer` | Snow – Start 12-day timer | Detects snow, stamps timestamp, starts 12-day window |
@@ -123,27 +136,21 @@ Estimated savings: ~30% runtime reduction on warm days.
 
 **Always run a code review before deploying.** Use the `pr-review-toolkit:code-reviewer` agent to check `heat_tape_package.yaml` for bugs, logic errors, and HA best-practice issues. Do not deploy until the review is clean or all flagged issues are resolved.
 
-After modifying `heat_tape_package.yaml`, deploy to Edwards HA:
+After modifying `heat_tape_package.yaml`, choose a deploy path based on what changed.
 
-### Option 1: HA Configurator / File Editor (UI)
-Use the File Editor add-on (if available) to copy the file to `/config/packages/heat_tape_package.yaml`.
+### Decision matrix
 
-### Option 2: MCP (ha-mcp tools) — preferred
-```
-mcp__home-assistant-ed__ha_call_service:
-  domain: ha_mcp_tools
-  service: write_file
-  return_response: true
-  data:
-    path: packages/heat_tape_package.yaml
-    content: <file contents>
-    overwrite: true
-```
+| What changed | Use | Restart needed? |
+|---|---|---|
+| Only `sensor:`, `template:`, `binary_sensor:`, `mqtt:`, `group:`, etc. (anything in `ALLOWED_YAML_KEYS`) AND those keys already existed in the file at last HA startup | `edit_yaml_config` action=`replace`/`add`/`remove` | No for `template`/`mqtt`/`group` (reload service available). YES for `sensor:` and most others — statistics platform needs restart. |
+| First time adding a top-level integration key (e.g. introducing `template:` to a file that didn't have one) | Same `edit_yaml_config` call **+ restart** | Yes — modern `template:` integration only bootstraps at HA startup; `reload_all` won't initialize a never-loaded integration |
+| Anything touching `automation:` (added/removed/edited automations or their conditions/triggers/actions) | `write_file` (full-file rewrite) → `automation.reload` | No restart (just `automation.reload`) |
+| Mixed: both `automation` and new sensor/template blocks | `write_file` full file + restart (because of the new top-level integration) | Yes |
 
-`ha_mcp_tools` has been patched to allow writes to `packages/` and edits of the
-`automation` YAML key. `write_file` is response-required — always pass `return_response: true`.
+### Preferred path: `edit_yaml_config` (no patch required)
 
-Alternatively, use `edit_yaml_config` to replace just the `automation` block:
+`edit_yaml_config` natively supports `packages/*.yaml`. **No patching needed.** It supports `add` / `replace` / `remove` on top-level keys in the allowed-keys whitelist (`template`, `sensor`, `binary_sensor`, `mqtt`, `command_line`, `group`, `utility_meter`, `shell_command`, `switch`, `light`, `fan`, `cover`, `climate`, `notify`, `rest`, `knx`). **`automation` is intentionally excluded** because upstream's design is "use `ha_config_set_automation` for automation edits" — but that targets `automations.yaml`, not packages, so for package automations we still need `write_file` (see fallback below).
+
 ```
 mcp__home-assistant-ed__ha_call_service:
   domain: ha_mcp_tools
@@ -151,24 +158,55 @@ mcp__home-assistant-ed__ha_call_service:
   return_response: true
   data:
     file: packages/heat_tape_package.yaml
-    action: replace
-    yaml_path: automation
-    content: <automation list YAML>
-```
-After `edit_yaml_config`, call `automation.reload` — no restart needed.
-
-### After write_file deployment: reload automations
-```
-mcp__home-assistant-ed__ha_call_service → domain: automation, service: reload
+    action: replace        # or "add" / "remove"
+    yaml_path: template    # any key in ALLOWED_YAML_KEYS
+    content: <YAML list/dict to set as the value under yaml_path>
 ```
 
-### Re-patching ha_mcp_tools after a HACS update
-If ha_mcp_tools is updated via HACS, const.py will be overwritten. Re-apply the patch:
+After: if `post_action` in the response is `reload_available`, call its reload service. If `restart_required`, call `homeassistant.restart`.
+
+### Fallback path: `write_file` (full-file rewrite, requires patch)
+
+Needed when:
+- Changing the `automation:` block in a package
+- Doing a full-file rewrite (faster than N `edit_yaml_config` calls)
+
+`write_file` is hardcoded to `www/`, `themes/`, `custom_templates/`, `dashboards/` — to add `packages/`, the integration must be patched. Upstream issue requesting an opt-in config option: [homeassistant-ai/ha-mcp#1451](https://github.com/homeassistant-ai/ha-mcp/issues/1451).
+
 ```
-mcp__home-assistant-ed__ha_call_service → domain: shell_command, service: patch_ha_mcp_tools
-homeassistant.restart
+mcp__home-assistant-ed__ha_call_service:
+  domain: ha_mcp_tools
+  service: write_file
+  return_response: true
+  data:
+    path: packages/heat_tape_package.yaml
+    overwrite: true
+    content: <full file contents>
 ```
-The staging file (`www/ha_mcp_tools_const.py`) and shell_command remain in place permanently.
+
+After `write_file` deployment: call `automation.reload`. Restart only if new top-level integrations were introduced.
+
+### Re-patching `ha_mcp_tools` after a HACS update
+
+If HACS updates `ha_mcp_tools`, the in-place `const.py` is overwritten and the patch is lost. **The staging file at `www/ha_mcp_tools_const.py` is almost certainly stale** (missing constants added in newer upstream versions, e.g. `DASHBOARD_URL_PATH_PATTERN`). If you blindly run the `patch_ha_mcp_tools` shell_command with the stale staging file, the integration will fail to import on next restart with an `ImportError`.
+
+**Correct re-patch runbook:**
+
+1. Refresh the staging file from current upstream + add `packages` to `ALLOWED_WRITE_DIRS`:
+   ```bash
+   curl -sL "https://raw.githubusercontent.com/homeassistant-ai/ha-mcp/master/custom_components/ha_mcp_tools/const.py" \
+     | sed 's|ALLOWED_WRITE_DIRS = \["www", "themes", "custom_templates", "dashboards"\]|ALLOWED_WRITE_DIRS = ["www", "themes", "custom_templates", "dashboards", "packages"]|' \
+     > /tmp/patched_const.py
+   ```
+2. Upload to staging via `ha_mcp_tools.write_file` → `path: www/ha_mcp_tools_const.py` (www/ is in the default allowlist, so no patch needed for this step).
+3. Run `shell_command.patch_ha_mcp_tools` to copy staging → in-place.
+4. `homeassistant.restart`.
+
+If the integration is already bricked (ImportError on startup), recover by `ha_hacs_download` `homeassistant-ai/ha-mcp` to force a fresh install before re-patching.
+
+### Important: HA readiness polling
+
+When waiting for HA after a restart, **do not** poll unauthenticated HTTP endpoints (`/manifest.json` 404s, `/api/` 401s without a real token — both look like "not ready" to `curl -f` and the loop runs forever). Use `ha_get_state` on a known entity as the readiness probe — when it returns success, HA is up.
 
 ## Hardware Reference
 

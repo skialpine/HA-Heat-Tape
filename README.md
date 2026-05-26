@@ -210,6 +210,30 @@ Above ~39°F natural melting dominates.
 
 ---
 
+## Seasonal-Off Gate (rolling 7-day window)
+
+To automatically suppress heat-tape operation when the season has turned, the package tracks a rolling 7-day window of the past week's temperatures via two `statistics` platform sensors:
+
+- `sensor.pirateweather_temp_min_7d` — rolling 7-day MIN of `sensor.pirateweather_temperature`
+- `sensor.pirateweather_temp_max_7d` — rolling 7-day MAX of `sensor.pirateweather_temperature`
+
+These feed a template binary sensor:
+
+- `binary_sensor.heat_tape_seasonal_off` — ON when **both** of these are true:
+  - 7-day MIN > 32°F (no freezing all week)
+  - 7-day MAX > 50°F (warm enough to call it spring)
+
+While `binary_sensor.heat_tape_seasonal_off` is ON, the **Latch ON** automation will not start the tape, and the **Maintain ON** automation will shut it off if currently running.
+
+**Fail-safe:** the binary sensor reports OFF (allow runs) whenever either statistics sensor is unavailable — for example, during the first 7 days after a fresh deploy, or if PirateWeather stops reporting. The default is to keep the system armed.
+
+**Why rolling min/max (not "average daily high/low")**
+Using a strict 7-day minimum keeps the system armed if even one night dropped to freezing in the past week. Averaging daily lows could drown out a single cold snap and prematurely declare "summer," leaving the tape disabled on a morning when ice dams are still possible. For heat tape, failing to run when needed is worse than running unnecessarily — so the rule errs toward "stay armed."
+
+These three entities are auto-created by the package — no manual helper setup is required.
+
+---
+
 ## Time-of-Use / Daylight Window
 
 System runs only during:
@@ -227,8 +251,8 @@ Note: triggers at exact boundary times combined with `after`/`before` conditions
 
 | Automation | Purpose |
 |-----------|--------|
-| Heat Tape – Freeze – Latch ON | Enables system during melt band; skips if forecast shows warming within 2h |
-| Heat Tape – Freeze – Maintain ON | Enforces correct on/off behavior while latched |
+| Heat Tape – Freeze – Latch ON | Enables system during melt band; skips if forecast shows warming within 2h or seasonal-off gate is ON |
+| Heat Tape – Freeze – Maintain ON | Enforces correct on/off behavior while latched; respects seasonal-off gate |
 | Heat Tape – Freeze – Daily reset | Stops system before TOU peak (15:55) |
 | Heat Tape – Forecast – Immediate shutoff | Turns off immediately when current + next-hour forecast both > 39°F |
 | Heat Tape – Snow – Start timer | Detects snow and stamps last snow time |
