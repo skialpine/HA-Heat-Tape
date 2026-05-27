@@ -136,6 +136,17 @@ The gate condition is wired into both `heat_tape_freeze_latch_on` and the stay-o
 
 **Always run a code review before deploying.** Use the `pr-review-toolkit:code-reviewer` agent to check `heat_tape_package.yaml` for bugs, logic errors, and HA best-practice issues. Do not deploy until the review is clean or all flagged issues are resolved.
 
+> **🚧 Pending upstream fix — check before deploying**
+>
+> [homeassistant-ai/ha-mcp#1452](https://github.com/homeassistant-ai/ha-mcp/pull/1452) (filed 2026-05-26, **OPEN** as of this writing) makes `ha_config_set_yaml` accept `automation` / `script` / `scene` keys when the file is under `packages/*.yaml`, with `post_action: reload_available` (no restart needed). Once merged + included in a `ha_mcp_tools` release we install:
+>
+> - **Drop the entire `write_file` + patch path.** Use `ha_config_set_yaml` for everything in the package — including the `automation:` block — via `action: replace`.
+> - **Delete** the staging file `www/ha_mcp_tools_const.py` and the `shell_command.patch_ha_mcp_tools` entry in CHV/Edwards configuration.yaml. Both become dead code.
+> - **Remove** the "Re-patching ha_mcp_tools after a HACS update" section below.
+> - **Restart no longer needed** for any change in the package (template/sensor/automation reload services all available).
+>
+> Check the PR status before each deploy: `gh pr view 1452 --repo homeassistant-ai/ha-mcp --json state,mergedAt`. The decision matrix and patch runbook below remain in force only until that PR is merged and we're running a release that includes it (currently on `v7.5.0.dev598`).
+
 After modifying `heat_tape_package.yaml`, choose a deploy path based on what changed.
 
 ### Decision matrix
