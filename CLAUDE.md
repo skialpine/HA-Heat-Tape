@@ -136,86 +136,23 @@ The gate condition is wired into both `heat_tape_freeze_latch_on` and the stay-o
 
 **Always run a code review before deploying.** Use the `pr-review-toolkit:code-reviewer` agent to check `heat_tape_package.yaml` for bugs, logic errors, and HA best-practice issues. Do not deploy until the review is clean or all flagged issues are resolved.
 
-> **🚧 Pending upstream fix — check before deploying**
->
-> [homeassistant-ai/ha-mcp#1452](https://github.com/homeassistant-ai/ha-mcp/pull/1452) (filed 2026-05-26, **OPEN** as of this writing) makes `ha_config_set_yaml` accept `automation` / `script` / `scene` keys when the file is under `packages/*.yaml`, with `post_action: reload_available` (no restart needed). Once merged + included in a `ha_mcp_tools` release we install:
->
-> - **Drop the entire `write_file` + patch path.** Use `ha_config_set_yaml` for everything in the package — including the `automation:` block — via `action: replace`.
-> - **Delete** the staging file `www/ha_mcp_tools_const.py` and the `shell_command.patch_ha_mcp_tools` entry in CHV/Edwards configuration.yaml. Both become dead code.
-> - **Remove** the "Re-patching ha_mcp_tools after a HACS update" section below.
-> - **Restart no longer needed** for any change in the package (template/sensor/automation reload services all available).
->
-> Check the PR status before each deploy: `gh pr view 1452 --repo homeassistant-ai/ha-mcp --json state,mergedAt`. The decision matrix and patch runbook below remain in force only until that PR is merged and we're running a release that includes it (currently on `v7.5.0.dev598`).
-
-After modifying `heat_tape_package.yaml`, choose a deploy path based on what changed.
-
-### Decision matrix
-
-| What changed | Use | Restart needed? |
-|---|---|---|
-| Only `sensor:`, `template:`, `binary_sensor:`, `mqtt:`, `group:`, etc. (anything in `ALLOWED_YAML_KEYS`) AND those keys already existed in the file at last HA startup | `edit_yaml_config` action=`replace`/`add`/`remove` | No for `template`/`mqtt`/`group` (reload service available). YES for `sensor:` and most others — statistics platform needs restart. |
-| First time adding a top-level integration key (e.g. introducing `template:` to a file that didn't have one) | Same `edit_yaml_config` call **+ restart** | Yes — modern `template:` integration only bootstraps at HA startup; `reload_all` won't initialize a never-loaded integration |
-| Anything touching `automation:` (added/removed/edited automations or their conditions/triggers/actions) | `write_file` (full-file rewrite) → `automation.reload` | No restart (just `automation.reload`) |
-| Mixed: both `automation` and new sensor/template blocks | `write_file` full file + restart (because of the new top-level integration) | Yes |
-
-### Preferred path: `edit_yaml_config` (no patch required)
-
-`edit_yaml_config` natively supports `packages/*.yaml`. **No patching needed.** It supports `add` / `replace` / `remove` on top-level keys in the allowed-keys whitelist (`template`, `sensor`, `binary_sensor`, `mqtt`, `command_line`, `group`, `utility_meter`, `shell_command`, `switch`, `light`, `fan`, `cover`, `climate`, `notify`, `rest`, `knx`). **`automation` is intentionally excluded** because upstream's design is "use `ha_config_set_automation` for automation edits" — but that targets `automations.yaml`, not packages, so for package automations we still need `write_file` (see fallback below).
+Deploy with `ha_config_set_yaml` (one call per top-level key changed). Per [ha-mcp#1452](https://github.com/homeassistant-ai/ha-mcp/pull/1452) (merged 2026-05-28, shipped in `v7.6.0.dev605`), `automation` / `script` / `scene` are accepted when `file` is a `packages/*.yaml`, alongside the existing `template`, `sensor`, `binary_sensor`, etc.
 
 ```
-mcp__home-assistant-ed__ha_call_service:
-  domain: ha_mcp_tools
-  service: edit_yaml_config
-  return_response: true
-  data:
-    file: packages/heat_tape_package.yaml
-    action: replace        # or "add" / "remove"
-    yaml_path: template    # any key in ALLOWED_YAML_KEYS
-    content: <YAML list/dict to set as the value under yaml_path>
+mcp__home-assistant-ed__ha_config_set_yaml:
+  file: packages/heat_tape_package.yaml
+  yaml_path: automation    # or template / sensor / binary_sensor / ...
+  action: replace          # or "add" / "remove"
+  content: <YAML list/dict to set as the value under yaml_path>
 ```
 
-After: if `post_action` in the response is `reload_available`, call its reload service. If `restart_required`, call `homeassistant.restart`.
+After each call, inspect `post_action` in the response and act:
+- `reload_available` → call its `reload_service` (e.g. `automation.reload`, `template.reload`). No restart.
+- `restart_required` → call `homeassistant.restart`. Required for `sensor:` (statistics platform) and most non-reloadable keys.
 
-### Fallback path: `write_file` (full-file rewrite, requires patch)
+**First time adding a top-level integration key** (e.g. introducing `template:` to a file that previously had none): the `ha_config_set_yaml` call succeeds with `reload_available`, but the integration only bootstraps at HA startup, so an explicit `homeassistant.restart` is still required.
 
-Needed when:
-- Changing the `automation:` block in a package
-- Doing a full-file rewrite (faster than N `edit_yaml_config` calls)
-
-`write_file` is hardcoded to `www/`, `themes/`, `custom_templates/`, `dashboards/` — to add `packages/`, the integration must be patched. Upstream issue requesting an opt-in config option: [homeassistant-ai/ha-mcp#1451](https://github.com/homeassistant-ai/ha-mcp/issues/1451).
-
-```
-mcp__home-assistant-ed__ha_call_service:
-  domain: ha_mcp_tools
-  service: write_file
-  return_response: true
-  data:
-    path: packages/heat_tape_package.yaml
-    overwrite: true
-    content: <full file contents>
-```
-
-After `write_file` deployment: call `automation.reload`. Restart only if new top-level integrations were introduced.
-
-### Re-patching `ha_mcp_tools` after a HACS update
-
-If HACS updates `ha_mcp_tools`, the in-place `const.py` is overwritten and the patch is lost. **The staging file at `www/ha_mcp_tools_const.py` is almost certainly stale** (missing constants added in newer upstream versions, e.g. `DASHBOARD_URL_PATH_PATTERN`). If you blindly run the `patch_ha_mcp_tools` shell_command with the stale staging file, the integration will fail to import on next restart with an `ImportError`.
-
-**Correct re-patch runbook:**
-
-1. Refresh the staging file from current upstream + add `packages` to `ALLOWED_WRITE_DIRS`:
-   ```bash
-   curl -sL "https://raw.githubusercontent.com/homeassistant-ai/ha-mcp/master/custom_components/ha_mcp_tools/const.py" \
-     | sed 's|ALLOWED_WRITE_DIRS = \["www", "themes", "custom_templates", "dashboards"\]|ALLOWED_WRITE_DIRS = ["www", "themes", "custom_templates", "dashboards", "packages"]|' \
-     > /tmp/patched_const.py
-   ```
-2. Upload to staging via `ha_mcp_tools.write_file` → `path: www/ha_mcp_tools_const.py` (www/ is in the default allowlist, so no patch needed for this step).
-3. Run `shell_command.patch_ha_mcp_tools` to copy staging → in-place.
-4. `homeassistant.restart`.
-
-If the integration is already bricked (ImportError on startup), recover by `ha_hacs_download` `homeassistant-ai/ha-mcp` to force a fresh install before re-patching.
-
-### Important: HA readiness polling
+### HA readiness polling
 
 When waiting for HA after a restart, **do not** poll unauthenticated HTTP endpoints (`/manifest.json` 404s, `/api/` 401s without a real token — both look like "not ready" to `curl -f` and the loop runs forever). Use `ha_get_state` on a known entity as the readiness probe — when it returns success, HA is up.
 
